@@ -14,6 +14,8 @@ class RecruitmentSpec:
     def label(self) -> str:
         if self.program == "internship" and self.season == "summer":
             return "暑期实习"
+        if self.program == "internship" and self.season == "winter":
+            return "寒假实习"
         if self.program == "internship":
             return "实习"
 
@@ -24,6 +26,7 @@ class RecruitmentSpec:
         batch_label = {
             "early": "提前批",
             "formal": "正式批",
+            "supplement": "补录",
         }.get(self.batch, "")
         return f"{season_label}{batch_label}"
 
@@ -33,6 +36,8 @@ def extract_recruitment_spec(text: str) -> RecruitmentSpec:
 
     if any(token in normalized for token in ("暑期实习", "summerintern", "暑期岗位")):
         return RecruitmentSpec(program="internship", season="summer")
+    if any(token in normalized for token in ("寒假实习", "winterintern", "寒假岗位")):
+        return RecruitmentSpec(program="internship", season="winter")
     if "实习" in normalized and "校招" not in normalized and "春招" not in normalized and "秋招" not in normalized:
         return RecruitmentSpec(program="internship")
 
@@ -45,6 +50,8 @@ def extract_recruitment_spec(text: str) -> RecruitmentSpec:
     batch = None
     if any(token in normalized for token in ("提前批", "早鸟", "prebatch")):
         batch = "early"
+    elif any(token in normalized for token in ("补录", "补招", "补录中")):
+        batch = "supplement"
     elif any(token in normalized for token in ("正式批", "正式启动", "正式开放")):
         batch = "formal"
 
@@ -65,6 +72,8 @@ def recruitment_matches(
             return False
         if spec.season == "summer":
             return any(token in normalized for token in ("暑期实习", "summerintern", "暑期岗位"))
+        if spec.season == "winter":
+            return any(token in normalized for token in ("寒假实习", "winterintern", "寒假岗位"))
         return True
 
     if spec.program == "campus":
@@ -81,6 +90,8 @@ def recruitment_matches(
 
         if spec.batch == "early":
             return any(token in normalized for token in ("提前批", "早鸟"))
+        if spec.batch == "supplement":
+            return any(token in normalized for token in ("补录", "补招", "补录中"))
         if spec.batch == "formal":
             formal_hit = any(token in normalized for token in ("正式批", "正式启动", "正式开放", "网申中"))
             if strict_batch:
@@ -95,16 +106,22 @@ def describe_item_type(text: str) -> str:
     normalized = normalize_text(text)
     if any(token in normalized for token in ("暑期实习", "summerintern", "暑期岗位")):
         return "暑期实习"
+    if any(token in normalized for token in ("寒假实习", "winterintern", "寒假岗位")):
+        return "寒假实习"
     if "实习" in normalized and "秋招" not in normalized and "春招" not in normalized:
         return "实习"
     if "春招" in normalized and any(token in normalized for token in ("提前批", "早鸟")):
         return "春招提前批"
+    if "春招" in normalized and any(token in normalized for token in ("补录", "补招", "补录中")):
+        return "春招补录"
     if "春招" in normalized and any(token in normalized for token in ("正式批", "正式启动", "正式开放", "网申中")):
         return "春招正式批"
     if "春招" in normalized:
         return "春招"
     if "秋招" in normalized and any(token in normalized for token in ("提前批", "早鸟")):
         return "秋招提前批"
+    if "秋招" in normalized and any(token in normalized for token in ("补录", "补招", "补录中")):
+        return "秋招补录"
     if "秋招" in normalized and any(token in normalized for token in ("正式批", "正式启动", "正式开放", "网申中")):
         return "秋招正式批"
     if "秋招" in normalized:
@@ -119,6 +136,8 @@ def describe_item_type(text: str) -> str:
 def wondercv_batch_params(spec: RecruitmentSpec) -> str | None:
     if spec.program == "internship" and spec.season == "summer":
         return "暑期实习"
+    if spec.program == "internship" and spec.season == "winter":
+        return "寒假实习"
     if spec.program == "internship":
         return "实习"
     if spec.program != "campus":
@@ -126,20 +145,26 @@ def wondercv_batch_params(spec: RecruitmentSpec) -> str | None:
 
     if spec.season == "autumn" and spec.batch == "early":
         return "秋招提前批"
+    if spec.season == "autumn" and spec.batch == "supplement":
+        return "秋招补录"
     if spec.season == "autumn" and spec.batch == "formal":
         return "秋招"
     if spec.season == "autumn":
-        return "秋招,秋招提前批"
+        return "秋招,秋招提前批,秋招补录"
 
     if spec.season == "spring" and spec.batch == "early":
         return "春招提前批"
+    if spec.season == "spring" and spec.batch == "supplement":
+        return "春招补录"
     if spec.season == "spring" and spec.batch == "formal":
         return "春招"
     if spec.season == "spring":
-        return "春招,春招提前批"
+        return "春招,春招提前批,春招补录"
 
     if spec.batch == "early":
         return "秋招提前批,春招提前批"
+    if spec.batch == "supplement":
+        return "秋招补录,春招补录"
     if spec.batch == "formal":
         return "秋招,春招"
     return None
