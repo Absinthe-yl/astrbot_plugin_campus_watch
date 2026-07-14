@@ -366,14 +366,11 @@ class CampusWatchPlugin(star.Star):
         items = self._filter_recent_items(items, days=7)
         items = self._dedupe_company_items(items)
         if items:
-            lines = [f"近7天聚合源收录的{spec.label()}公司："]
+            lines = [f"近7天开了{spec.label()}的公司有这些："]
             for item in items[:max_items]:
-                tags = "、".join(item.tags[:4]) if item.tags else "无标签"
                 lines.append(
-                    f"- {item.company} / {describe_item_type(self._item_text(item))} / "
-                    f"收录 {item.collected_date or '未知'} / {tags}"
+                    f"- {item.company}：{describe_item_type(self._item_text(item))}，收录于 {item.collected_date or '未知'}"
                 )
-            lines.append("说明: 以上来自 WonderCV 聚合源。")
             return "\n".join(lines)
 
         rows = self.store.list_current_status()
@@ -396,7 +393,7 @@ class CampusWatchPlugin(star.Star):
 
         spec = recruitment_spec or RecruitmentSpec()
         discovery_notes: list[str] = []
-        aggregator_notes: list[str] = []
+        conversational_answers: list[str] = []
         aggregator_hit_companies: set[str] = set()
         for company in companies[:10]:
             resolution = resolve_company(company)
@@ -416,22 +413,26 @@ class CampusWatchPlugin(star.Star):
             )
             if aggregator_item:
                 aggregator_hit_companies.add(canonical)
-                aggregator_notes.append(
-                    f"- {canonical}: {spec.label()}已开启（WonderCV） / "
-                    f"{describe_item_type(self._item_text(aggregator_item))} / "
-                    f"收录 {aggregator_item.collected_date or '未知'} / "
-                    f"{aggregator_item.summary[:70]} / {aggregator_item.url}"
+                conversational_answers.append(
+                    self._format_positive_company_answer(
+                        canonical,
+                        spec,
+                        aggregator_item,
+                    )
                 )
             elif spec.batch == "formal":
                 loose_item = await self.wondercv.find_company(canonical, recruitment_spec=RecruitmentSpec(program=spec.program, season=spec.season))
                 if loose_item:
-                    aggregator_notes.append(
-                        f"- {canonical}: 暂未检测到{spec.label()}，但已检测到"
-                        f"{describe_item_type(self._item_text(loose_item))} / {loose_item.url}"
+                    conversational_answers.append(
+                        self._format_batch_pending_answer(
+                            canonical,
+                            spec,
+                            loose_item,
+                        )
                     )
 
         rows = {row["company"]: row for row in self.store.list_current_status()}
-        lines = []
+        fallback_answers: list[str] = []
         for company in companies[:10]:
             resolution = resolve_company(company)
             canonical = resolution.canonical or company.strip()
@@ -439,22 +440,26 @@ class CampusWatchPlugin(star.Star):
                 continue
             row = rows.get(canonical)
             if not row:
-                lines.append(f"- {canonical}: 暂无可用状态，先执行 /campus_refresh {canonical}")
+                fallback_answers.append(f"{canonical}暂时还没有可用结果。")
                 continue
             if not row["last_checked_at"]:
-                lines.append(f"- {canonical}: 还没检查，先执行 /campus_refresh {canonical}")
+                fallback_answers.append(f"{canonical}目前还没有完成检查。")
                 continue
             status = "已开启" if row["last_opened"] == 1 else "暂未检测到"
             detail = row["evidence"] or row["last_error"] or "无附加信息"
-            lines.append(f"- {canonical}: {status} / {detail[:120]}")
-        sections: list[str] = []
-        if aggregator_notes:
-            sections.extend(["聚合源结果：", *aggregator_notes, ""])
+            if row["last_opened"] == 1:
+                fallback_answers.append(f"{canonical}{spec.label()}已开启。")
+            else:
+                fallback_answers.append(f"{canonical}暂未检测到{spec.label()}。")
+
+        parts: list[str] = []
+        if conversational_answers:
+            parts.extend(conversational_answers)
+        if fallback_answers:
+            parts.extend(fallback_answers)
         if discovery_notes:
-            sections.extend(["自动发现结果：", *discovery_notes, ""])
-        if lines:
-            sections.extend(["官方源补充状态：", *lines])
-        return "\n".join(sections) if sections else "\n".join(lines)
+            parts.append("已自动补充部分公司的官方校招源。")
+        return "\n".join(parts)
 
     def _item_matches_spec(self, item, recruitment_spec: RecruitmentSpec) -> bool:
         from .recruitment_types import recruitment_matches
@@ -463,6 +468,28 @@ class CampusWatchPlugin(star.Star):
 
     def _item_text(self, item) -> str:
         return f"{item.title} {item.summary} {' '.join(item.tags)}"
+
+    def _format_positive_company_answer(
+        self,
+        company: str,
+        spec: RecruitmentSpec,
+        item,
+    ) -> str:
+        actual_type = describe_item_type(self._item_text(item))
+        date_text = item.collected_date or "未知时间"
+        target_label = spec.label()
+        if spec.program == "campus" and spec.season is None and spec.batch is None:
+            return f"{company}开了。目前检测到的是{actual_type}，WonderCV 于 {date_text} 收录。"
+        return f"{company}{target_label}开了。目前检测到的是{actual_type}，WonderCV 于 {date_text} 收录。"
+
+    def _format_batch_pending_answer(
+        self,
+        company: str,
+        spec: RecruitmentSpec,
+        item,
+    ) -> str:
+        actual_type = describe_item_type(self._item_text(item))
+        return f"{company}暂未检测到{spec.label()}，但已经检测到{actual_type}。"
 
     def _filter_recent_items(self, items: list, days: int) -> list:
         cutoff = datetime.now().date() - timedelta(days=days - 1)
