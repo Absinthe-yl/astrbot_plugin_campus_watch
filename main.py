@@ -61,7 +61,7 @@ class CampusWatchPlugin(star.Star):
         parsed = await self._parse_query(query, event)
         intent = parsed.get("intent", "ignore")
         companies = parsed.get("companies") or []
-        limit = max(1, min(int(parsed.get("limit") or 10), 10))
+        limit = max(1, min(int(parsed.get("limit") or 10), 20))
         days = max(1, min(int(parsed.get("days") or 7), 30))
         recruitment_spec = self._spec_from_query_and_json(query, parsed)
 
