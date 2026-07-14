@@ -55,7 +55,7 @@ DEFAULT_SOURCES = [
     SourceDefinition("小米", "https://hr.xiaomi.com/campus"),
     SourceDefinition("网易", "https://campus.163.com/"),
     SourceDefinition("拼多多", "https://careers.pinduoduo.com/campus"),
-    SourceDefinition("百度", "https://talent.baidu.com/"),
+    SourceDefinition("百度", "https://talent.baidu.com/jobs/trend"),
     SourceDefinition("美团", "https://zhaopin.meituan.com/web/official/home"),
 ]
 

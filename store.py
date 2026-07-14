@@ -4,6 +4,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
+from .resolver import CompanyResolution, resolve_company
 from .sources import DEFAULT_SOURCES, SourceDefinition, SourceResult
 
 
@@ -80,16 +81,27 @@ class CampusWatchStore:
             ).fetchall()
         return [SourceDefinition(row["company"], row["url"]) for row in rows]
 
-    def get_source(self, company: str) -> SourceDefinition | None:
-        target = company.strip().lower()
+    def resolve_source(self, company: str) -> tuple[CompanyResolution, SourceDefinition | None]:
+        resolution = resolve_company(company)
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT company, url FROM sources WHERE enabled = 1 ORDER BY company"
             ).fetchall()
-        for row in rows:
-            if row["company"].lower() == target or target in row["company"].lower():
-                return SourceDefinition(row["company"], row["url"])
-        return None
+        source_map = {
+            row["company"]: SourceDefinition(row["company"], row["url"]) for row in rows
+        }
+        if resolution.resolved and resolution.canonical in source_map:
+            return resolution, source_map[resolution.canonical]
+
+        target = company.strip().lower()
+        fuzzy = [
+            SourceDefinition(row["company"], row["url"])
+            for row in rows
+            if row["company"].lower() == target or target in row["company"].lower()
+        ]
+        if len(fuzzy) == 1:
+            return resolution, fuzzy[0]
+        return resolution, None
 
     def record_refresh(self, result: SourceResult) -> RefreshOutcome:
         with self._connect() as conn:
@@ -144,8 +156,10 @@ class CampusWatchStore:
         )
 
     def add_watch(self, company: str) -> str:
-        source = self.get_source(company)
+        resolution, source = self.resolve_source(company)
         if not source:
+            if resolution.ambiguous:
+                raise ValueError(f"公司名有歧义: {company}，候选: {'、'.join(resolution.candidates)}")
             raise ValueError(f"未找到公司: {company}")
         with self._connect() as conn:
             conn.execute(
@@ -154,8 +168,10 @@ class CampusWatchStore:
         return source.company
 
     def remove_watch(self, company: str) -> str:
-        source = self.get_source(company)
+        resolution, source = self.resolve_source(company)
         if not source:
+            if resolution.ambiguous:
+                raise ValueError(f"公司名有歧义: {company}，候选: {'、'.join(resolution.candidates)}")
             raise ValueError(f"未找到公司: {company}")
         with self._connect() as conn:
             conn.execute("DELETE FROM watch_list WHERE company = ?", (source.company,))
