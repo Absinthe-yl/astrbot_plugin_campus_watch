@@ -1,6 +1,6 @@
 name: astrbot_plugin_campus_watch
 desc: 基于 WonderCV API 的校园招聘自然语言查询插件
-version: 0.6.0
+version: 0.6.3
 author: "22353"
 display_name: 校招监控
 short_desc: 跟踪官方校招页，记录今天新开的公司

@@ -7,6 +7,8 @@ from pathlib import Path
 
 from astrbot.api import star
 from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.api.message_components import Reply
+from astrbot.api.platform import MessageType
 from astrbot.core.provider.entities import ProviderType
 from astrbot.core.star.filter.command import GreedyStr
 from astrbot.core.star.star_tools import StarTools
@@ -21,12 +23,13 @@ from .resolver import resolve_companies_in_text, resolve_company
     "astrbot_plugin_campus_watch",
     "22353",
     "基于 WonderCV API 的校园招聘自然语言查询插件",
-    "0.6.0",
+    "0.6.3",
 )
 class CampusWatchPlugin(star.Star):
     def __init__(self, context: star.Context) -> None:
         super().__init__(context)
-        self.wondercv = WonderCVAggregator(cache_path=self._data_dir() / "wondercv_query_cache.json")
+        self.wondercv = WonderCVAggregator()
+        self._session_state: dict[str, dict] = {}
 
     @filter.command("校招")
     async def campus_ask(self, event: AstrMessageEvent, query: GreedyStr):
@@ -36,7 +39,7 @@ class CampusWatchPlugin(star.Star):
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def campus_natural_language(self, event: AstrMessageEvent):
         query = event.message_str.strip()
-        if not self._should_handle_nl(query):
+        if not self._should_handle_event(event, query):
             return
         answer = await self._answer_query(query, event)
         yield event.plain_result(answer).stop_event()
@@ -54,8 +57,25 @@ class CampusWatchPlugin(star.Star):
         if any(keyword in query for keyword in keywords):
             return True
         companies = resolve_companies_in_text(query)
-        question_tokens = ("开没开", "开了吗", "开始了吗", "有吗", "有无", "在招", "招吗")
-        return bool(companies) and any(token in query for token in question_tokens)
+        return bool(companies) and self._has_company_question_token(query)
+
+    def _should_handle_event(self, event: AstrMessageEvent, query: str) -> bool:
+        if not self._should_handle_nl(query):
+            return False
+        if event.get_message_type() == MessageType.FRIEND_MESSAGE:
+            return True
+        if event.is_at_or_wake_command:
+            return True
+        return self._is_reply_to_self(event)
+
+    def _is_reply_to_self(self, event: AstrMessageEvent) -> bool:
+        self_id = str(event.get_self_id() or "").strip()
+        if not self_id:
+            return False
+        for comp in event.get_messages():
+            if isinstance(comp, Reply) and str(getattr(comp, "sender_id", "") or "").strip() == self_id:
+                return True
+        return False
 
     async def _answer_query(self, query: str, event: AstrMessageEvent) -> str:
         parsed = await self._parse_query(query, event)
@@ -66,9 +86,25 @@ class CampusWatchPlugin(star.Star):
         recruitment_spec = self._spec_from_query_and_json(query, parsed)
 
         if intent == "company_status":
-            return await self._answer_company_status(companies, recruitment_spec)
+            answer = await self._answer_company_status(companies, recruitment_spec)
+            self._save_session_state(
+                event,
+                intent="company_status",
+                companies=companies,
+                recruitment_spec=recruitment_spec,
+                days=days,
+            )
+            return answer
         if intent in {"current_openings", "today_openings"}:
-            return await self._answer_company_list(recruitment_spec, limit=limit, days=days)
+            answer = await self._answer_company_list(recruitment_spec, limit=limit, days=days)
+            self._save_session_state(
+                event,
+                intent=intent,
+                companies=[],
+                recruitment_spec=recruitment_spec,
+                days=days,
+            )
+            return answer
         return (
             "你可以直接问我这些："
             "字节开校招了吗、腾讯秋招提前批开没开、百度春招正式批开没开、"
@@ -79,7 +115,7 @@ class CampusWatchPlugin(star.Star):
         local = self._parse_query_local(query)
         llm_data = await self._parse_query_with_llm(query, event)
         if not llm_data:
-            return local
+            return self._merge_with_session_state(local, query, event)
         if not llm_data.get("companies") and local.get("companies"):
             llm_data["companies"] = local["companies"]
         if llm_data.get("intent") == "ignore" and local.get("intent") != "ignore":
@@ -88,11 +124,11 @@ class CampusWatchPlugin(star.Star):
             llm_data["days"] = local.get("days", 7)
         if not llm_data.get("limit"):
             llm_data["limit"] = local.get("limit", 10)
-        return llm_data
+        return self._merge_with_session_state(llm_data, query, event)
 
     def _parse_query_local(self, query: str) -> dict:
         companies = resolve_companies_in_text(query)
-        if companies and any(token in query for token in ("开没开", "开了吗", "开始了吗", "有吗", "有无", "在招", "招吗")):
+        if companies and self._has_company_question_token(query):
             return {"intent": "company_status", "companies": companies, "limit": 5, "days": 30}
         if "今天" in query and any(token in query for token in ("哪些", "哪几家", "什么公司")):
             return {"intent": "today_openings", "companies": [], "limit": 10, "days": 1}
@@ -119,6 +155,8 @@ class CampusWatchPlugin(star.Star):
             "只输出 JSON，不要解释。"
             '\n格式: {"intent":"company_status","companies":["腾讯"],"program":"campus","season":"autumn","batch":"early","days":7,"limit":10}'
             "\nintent 只能是 company_status current_openings today_openings ignore。"
+            "\n如果问题里出现了明确公司名，优先使用 company_status，不要返回 current_openings。"
+            "\n像“拼多多呢”“那腾讯呢”这种续问，若上下文在问招聘状态，也按 company_status 处理。"
             "\nprogram 只能是 campus internship null。"
             "\nseason 只能是 autumn spring summer winter null。"
             "\nbatch 只能是 early formal supplement daily null。"
@@ -210,14 +248,12 @@ class CampusWatchPlugin(star.Star):
         limit: int,
         days: int,
     ) -> str:
-        end_at = datetime.now().strftime("%Y-%m-%d")
         start_at = (datetime.now() - timedelta(days=days - 1)).strftime("%Y-%m-%d")
         items = await self.wondercv.search_company(
             keyword=None,
             limit=80,
             recruitment_spec=recruitment_spec,
             start_at=start_at,
-            end_at=end_at,
         )
         items = self._dedupe_company_items(items)
         if not items:
@@ -240,6 +276,12 @@ class CampusWatchPlugin(star.Star):
         target_label = self._target_label(recruitment_spec)
         if recruitment_spec.program == "campus" and recruitment_spec.season is None and recruitment_spec.batch is None:
             return f"{company}开了。目前检测到的是{actual_type}，收录于 {self._display_date(item.collected_date)}。"
+        if recruitment_spec.program == "campus" and recruitment_spec.batch == "early" and recruitment_spec.season is None:
+            return f"{company}提前批开了。目前检测到的是{actual_type}，收录于 {self._display_date(item.collected_date)}。"
+        if recruitment_spec.program == "campus" and recruitment_spec.batch == "supplement" and recruitment_spec.season is None:
+            return f"{company}补录开了。目前检测到的是{actual_type}，收录于 {self._display_date(item.collected_date)}。"
+        if recruitment_spec.program == "campus" and recruitment_spec.batch == "formal" and recruitment_spec.season is None:
+            return f"{company}正式批开了。目前检测到的是{actual_type}，收录于 {self._display_date(item.collected_date)}。"
         if recruitment_spec.program == "internship" and recruitment_spec.season is None:
             return f"{company}开了实习。目前检测到的是{actual_type}，收录于 {self._display_date(item.collected_date)}。"
         return f"{company}{target_label}开了。目前检测到的是{actual_type}，收录于 {self._display_date(item.collected_date)}。"
@@ -267,3 +309,52 @@ class CampusWatchPlugin(star.Star):
             key=lambda item: (item.collected_date or "", item.company),
             reverse=True,
         )
+
+    def _has_company_question_token(self, query: str) -> bool:
+        question_tokens = (
+            "开没开",
+            "开了吗",
+            "有没有开",
+            "开了没",
+            "开始了吗",
+            "有吗",
+            "有无",
+            "在招",
+            "招吗",
+            "呢",
+        )
+        return any(token in query for token in question_tokens)
+
+    def _save_session_state(
+        self,
+        event: AstrMessageEvent,
+        intent: str,
+        companies: list[str],
+        recruitment_spec: RecruitmentSpec,
+        days: int,
+    ) -> None:
+        self._session_state[event.unified_msg_origin] = {
+            "intent": intent,
+            "companies": companies[:5],
+            "program": recruitment_spec.program,
+            "season": recruitment_spec.season,
+            "batch": recruitment_spec.batch,
+            "days": days,
+        }
+
+    def _merge_with_session_state(self, parsed: dict, query: str, event: AstrMessageEvent) -> dict:
+        state = self._session_state.get(event.unified_msg_origin) or {}
+        companies = parsed.get("companies") or []
+        if companies and parsed.get("intent") in {"ignore", "company_status", None}:
+            if not parsed.get("program") and not parsed.get("season") and not parsed.get("batch"):
+                if self._looks_like_follow_up(query) and state.get("intent") == "company_status":
+                    parsed["intent"] = "company_status"
+                    parsed["program"] = state.get("program")
+                    parsed["season"] = state.get("season")
+                    parsed["batch"] = state.get("batch")
+                    parsed["days"] = parsed.get("days") or state.get("days") or 30
+        return parsed
+
+    def _looks_like_follow_up(self, query: str) -> bool:
+        query = query.strip()
+        return any(token in query for token in ("呢", "那", "有没有", "开了吗", "开没开", "开了没"))
