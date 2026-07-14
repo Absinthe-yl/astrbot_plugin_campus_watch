@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 
 import httpx
@@ -23,6 +22,7 @@ class AggregatorItem:
 
 class WonderCVAggregator:
     homepage = "https://www.wondercv.com/xiaozhao/"
+    api_url = "https://api.wondercv.com/cv/v3/campus_recruits_v2"
 
     def __init__(self, timeout: float = 20.0) -> None:
         self.timeout = timeout
@@ -40,9 +40,18 @@ class WonderCVAggregator:
             follow_redirects=True,
             headers=self.headers,
         ) as client:
-            response = await client.get(self.homepage)
-            response.raise_for_status()
-        return self._parse_items(response.text)[:limit]
+            items: list[AggregatorItem] = []
+            page = 1
+            page_size = min(max(limit, 20), 100)
+            while len(items) < limit:
+                batch = await self._fetch_page(client, page=page, page_size=page_size)
+                if not batch:
+                    break
+                items.extend(batch)
+                if len(batch) < page_size:
+                    break
+                page += 1
+        return items[:limit]
 
     async def find_company(
         self,
@@ -50,7 +59,7 @@ class WonderCVAggregator:
         recruitment_spec: RecruitmentSpec | None = None,
         strict_batch: bool = False,
     ) -> AggregatorItem | None:
-        items = await self.fetch_latest_items(limit=40)
+        items = await self.search_company(company, limit=30)
         aliases = [normalize_text(alias) for alias in aliases_for_company(company)]
         spec = recruitment_spec or RecruitmentSpec()
         for item in items:
@@ -65,50 +74,67 @@ class WonderCVAggregator:
                 return item
         return None
 
-    def _parse_items(self, html: str) -> list[AggregatorItem]:
-        blocks = re.findall(
-            r'(<a href="/xiaozhao/[\s\S]*?class="campus-job-card job-card"[\s\S]*?</a>)',
-            html,
-            flags=re.IGNORECASE,
-        )
-        items: list[AggregatorItem] = []
-        for block in blocks:
-            url_match = re.search(r'href="(/xiaozhao/[^"]+/)"', block)
-            company_match = re.search(r'<div class="company"[^>]*>([\s\S]*?)</div>', block)
-            summary_match = re.search(r'<div class="summary"[^>]*><p[^>]*>([\s\S]*?)</p>', block)
-            date_match = re.search(r'收录\s*([0-9]{4}\.[0-9]{2}\.[0-9]{2})', block)
-            tag_matches = re.findall(r'<span class="info-tag"[^>]*>([\s\S]*?)</span>', block)
-
-            url = f"https://www.wondercv.com{url_match.group(1)}" if url_match else ""
-            company = self._clean(company_match.group(1)) if company_match else ""
-            summary = self._clean(summary_match.group(1)) if summary_match else ""
-            collected_date = date_match.group(1) if date_match else ""
-            tags = tuple(self._clean(tag) for tag in tag_matches if self._clean(tag))
-            title = summary[:40]
-
-            if not url or not company or not summary:
-                continue
-
-            items.append(
-                AggregatorItem(
-                    source="WonderCV",
-                    company=company,
-                    title=title,
-                    summary=summary,
-                    collected_date=collected_date,
-                    url=url,
-                    tags=tags,
+    async def search_company(self, keyword: str, limit: int = 20) -> list[AggregatorItem]:
+        async with httpx.AsyncClient(
+            timeout=self.timeout,
+            follow_redirects=True,
+            headers=self.headers,
+        ) as client:
+            items: list[AggregatorItem] = []
+            page = 1
+            page_size = min(max(limit, 12), 100)
+            while len(items) < limit:
+                batch = await self._fetch_page(
+                    client,
+                    page=page,
+                    page_size=page_size,
+                    keyword=keyword,
                 )
-            )
-        return items
+                if not batch:
+                    break
+                items.extend(batch)
+                if len(batch) < page_size:
+                    break
+                page += 1
+        return items[:limit]
 
-    def _clean(self, value: str) -> str:
-        text = re.sub(r"<[^>]+>", " ", value)
-        text = (
-            text.replace("&nbsp;", " ")
-            .replace("&#x27;", "'")
-            .replace("&amp;", "&")
-            .replace("&quot;", '"')
+    async def _fetch_page(
+        self,
+        client: httpx.AsyncClient,
+        page: int,
+        page_size: int,
+        keyword: str | None = None,
+    ) -> list[AggregatorItem]:
+        params = {"page": page, "page_size": page_size}
+        if keyword:
+            params["keyword"] = keyword
+        response = await client.get(self.api_url, params=params)
+        response.raise_for_status()
+        payload = response.json()
+        data = payload.get("data") or {}
+        raw_items = data.get("items") or []
+        results: list[AggregatorItem] = []
+        for item in raw_items:
+            parsed = self._from_api_item(item)
+            if parsed is not None:
+                results.append(parsed)
+        return results
+
+    def _from_api_item(self, item: dict) -> AggregatorItem | None:
+        token = item.get("token") or ""
+        company = item.get("company_name") or ""
+        title = item.get("title") or ""
+        summary = item.get("summary") or ""
+        collected_date = item.get("updated_date") or ""
+        tags = tuple((item.get("info_tags") or [])[:])
+        if not token or not company or not summary:
+            return None
+        return AggregatorItem(
+            source="WonderCV",
+            company=company,
+            title=title,
+            summary=summary,
+            collected_date=collected_date,
+            url=f"https://www.wondercv.com/xiaozhao/{token}/",
+            tags=tags,
         )
-        text = re.sub(r"\s+", " ", text)
-        return text.strip()
