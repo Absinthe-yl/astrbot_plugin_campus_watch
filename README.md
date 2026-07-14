@@ -39,6 +39,8 @@ The plugin can also answer direct natural-language questions in chat, for exampl
 - `抖音开了吗`
 - `腾讯秋招提前批开没开`
 - `百度秋招正式批开没开`
+- `美团春招提前批开没开`
+- `阿里春招正式批开没开`
 - `字节暑期实习开没开`
 - `美团春招开没开`
 

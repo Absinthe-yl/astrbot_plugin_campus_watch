@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from astrbot.api import star
@@ -361,10 +361,12 @@ class CampusWatchPlugin(star.Star):
     ) -> str:
         spec = recruitment_spec or RecruitmentSpec()
         max_items = max(1, min(limit, 10))
-        items = await self.wondercv.fetch_latest_items(limit=max_items)
+        items = await self.wondercv.fetch_latest_items(limit=40)
         items = [item for item in items if self._item_matches_spec(item, spec)]
+        items = self._filter_recent_items(items, days=7)
+        items = self._dedupe_company_items(items)
         if items:
-            lines = [f"目前聚合源最新{spec.label()}："]
+            lines = [f"近7天聚合源收录的{spec.label()}公司："]
             for item in items[:max_items]:
                 tags = "、".join(item.tags[:4]) if item.tags else "无标签"
                 lines.append(
@@ -461,6 +463,35 @@ class CampusWatchPlugin(star.Star):
 
     def _item_text(self, item) -> str:
         return f"{item.title} {item.summary} {' '.join(item.tags)}"
+
+    def _filter_recent_items(self, items: list, days: int) -> list:
+        cutoff = datetime.now().date() - timedelta(days=days - 1)
+        result = []
+        for item in items:
+            if not item.collected_date:
+                continue
+            try:
+                collected = datetime.strptime(item.collected_date, "%Y.%m.%d").date()
+            except ValueError:
+                continue
+            if collected >= cutoff:
+                result.append(item)
+        return result
+
+    def _dedupe_company_items(self, items: list) -> list:
+        chosen: dict[str, object] = {}
+        for item in items:
+            current = chosen.get(item.company)
+            if current is None:
+                chosen[item.company] = item
+                continue
+            if (item.collected_date or "") > (current.collected_date or ""):
+                chosen[item.company] = item
+        return sorted(
+            chosen.values(),
+            key=lambda item: (item.collected_date or "", item.company),
+            reverse=True,
+        )
 
     async def _ensure_source_for_company(
         self,

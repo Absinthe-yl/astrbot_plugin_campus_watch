@@ -99,6 +99,8 @@ def describe_item_type(text: str) -> str:
         return "实习"
     if "春招" in normalized and any(token in normalized for token in ("提前批", "早鸟")):
         return "春招提前批"
+    if "春招" in normalized and any(token in normalized for token in ("正式批", "正式启动", "正式开放", "网申中")):
+        return "春招正式批"
     if "春招" in normalized:
         return "春招"
     if "秋招" in normalized and any(token in normalized for token in ("提前批", "早鸟")):
