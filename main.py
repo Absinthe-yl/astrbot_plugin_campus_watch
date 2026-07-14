@@ -23,7 +23,7 @@ from .resolver import resolve_companies_in_text, resolve_company
     "astrbot_plugin_campus_watch",
     "22353",
     "基于 WonderCV API 的校园招聘自然语言查询插件",
-    "0.6.3",
+    "0.6.4",
 )
 class CampusWatchPlugin(star.Star):
     def __init__(self, context: star.Context) -> None:
@@ -248,7 +248,9 @@ class CampusWatchPlugin(star.Star):
         limit: int,
         days: int,
     ) -> str:
-        start_at = (datetime.now() - timedelta(days=days - 1)).strftime("%Y-%m-%d")
+        start_at = None
+        if not self._list_query_should_skip_date_filter(recruitment_spec, days):
+            start_at = (datetime.now() - timedelta(days=days - 1)).strftime("%Y-%m-%d")
         items = await self.wondercv.search_company(
             keyword=None,
             limit=80,
@@ -257,9 +259,14 @@ class CampusWatchPlugin(star.Star):
         )
         items = self._dedupe_company_items(items)
         if not items:
-            return f"近{days}天还没有检测到新的{self._target_label(recruitment_spec)}公司。"
+            if start_at:
+                return f"近{days}天还没有检测到新的{self._target_label(recruitment_spec)}公司。"
+            return f"暂时还没有检测到新的{self._target_label(recruitment_spec)}公司。"
 
-        lines = [f"近{days}天开了{self._target_label(recruitment_spec)}的公司有这些："]
+        if start_at:
+            lines = [f"近{days}天开了{self._target_label(recruitment_spec)}的公司有这些："]
+        else:
+            lines = [f"开了{self._target_label(recruitment_spec)}的公司有这些："]
         for item in items[:limit]:
             lines.append(
                 f"- {item.company}：{describe_item_type(self._item_text(item))}，收录于 {self._display_date(item.collected_date)}"
@@ -358,3 +365,6 @@ class CampusWatchPlugin(star.Star):
     def _looks_like_follow_up(self, query: str) -> bool:
         query = query.strip()
         return any(token in query for token in ("呢", "那", "有没有", "开了吗", "开没开", "开了没"))
+
+    def _list_query_should_skip_date_filter(self, spec: RecruitmentSpec, days: int) -> bool:
+        return spec.program == "internship" and spec.batch == "daily" and days == 7
