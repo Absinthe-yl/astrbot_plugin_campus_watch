@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import httpx
 
 from .company_registry import aliases_for_company
+from .recruitment_types import RecruitmentSpec, recruitment_matches
 from .resolver import normalize_text
 
 
@@ -43,14 +44,24 @@ class WonderCVAggregator:
             response.raise_for_status()
         return self._parse_items(response.text)[:limit]
 
-    async def find_company(self, company: str) -> AggregatorItem | None:
+    async def find_company(
+        self,
+        company: str,
+        recruitment_spec: RecruitmentSpec | None = None,
+        strict_batch: bool = False,
+    ) -> AggregatorItem | None:
         items = await self.fetch_latest_items(limit=40)
         aliases = [normalize_text(alias) for alias in aliases_for_company(company)]
+        spec = recruitment_spec or RecruitmentSpec()
         for item in items:
             haystack = normalize_text(
                 f"{item.company} {item.title} {item.summary} {' '.join(item.tags)}"
             )
-            if any(alias and alias in haystack for alias in aliases):
+            if any(alias and alias in haystack for alias in aliases) and recruitment_matches(
+                f"{item.title} {item.summary} {' '.join(item.tags)}",
+                spec,
+                strict_batch=strict_batch,
+            ):
                 return item
         return None
 

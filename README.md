@@ -37,6 +37,10 @@ The plugin can also answer direct natural-language questions in chat, for exampl
 - `目前哪些公司开了校招`
 - `腾讯科技开没开校招`
 - `抖音开了吗`
+- `腾讯秋招提前批开没开`
+- `百度秋招正式批开没开`
+- `字节暑期实习开没开`
+- `美团春招开没开`
 
 When a company is not yet in the local source database, the plugin will:
 
@@ -47,8 +51,9 @@ When a company is not yet in the local source database, the plugin will:
 The plugin reads the public WonderCV campus feed as the primary aggregated source to:
 
 1. Answer "currently which companies have openings" with aggregated results.
-2. Provide auxiliary evidence for "has company X opened campus recruitment".
-3. Show same-day aggregated feed items when local refresh data is empty.
+2. Distinguish campus recruitment types such as spring, autumn, early batch, formal batch, and summer internship.
+3. Provide auxiliary evidence for "has company X opened campus recruitment".
+4. Show same-day aggregated feed items when local refresh data is empty.
 
 ## Install
 
