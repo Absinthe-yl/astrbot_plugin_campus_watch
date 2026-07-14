@@ -1,0 +1,11 @@
+name: astrbot_plugin_campus_watch
+desc: 监控 27 届校园招聘开启状态的官方源插件
+version: 0.1.0
+author: 22353
+display_name: 校招监控
+short_desc: 跟踪官方校招页，记录今天新开的公司
+support_platforms:
+  - aiocqhttp
+  - telegram
+  - lark
+astrbot_version: ">=4.16,<5"
