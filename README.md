@@ -12,6 +12,7 @@ AstrBot plugin for tracking official campus recruitment pages and detecting new 
 - Support company alias resolution such as `腾讯科技 -> 腾讯`, `抖音 -> 字节跳动`.
 - Support natural-language campus recruitment queries through AstrBot LLM.
 - Support auto-discovery of official campus sources for companies not yet stored locally.
+- Support WonderCV public campus feed as the primary aggregated source.
 
 ## Commands
 
@@ -43,6 +44,12 @@ When a company is not yet in the local source database, the plugin will:
 2. Validate whether the page looks like an official recruitment entry.
 3. Save the verified source for reuse in later queries.
 
+The plugin reads the public WonderCV campus feed as the primary aggregated source to:
+
+1. Answer "currently which companies have openings" with aggregated results.
+2. Provide auxiliary evidence for "has company X opened campus recruitment".
+3. Show same-day aggregated feed items when local refresh data is empty.
+
 ## Install
 
 Place this plugin directory under:
@@ -56,6 +63,8 @@ Then reload plugins from AstrBot WebUI.
 ## Runtime Notes
 
 - This first version uses official campus pages as the primary data source.
+- WonderCV is the primary aggregated source for natural-language campus queries.
+- Official company pages are still used for per-company verification and fallback checks.
 - It detects likely openings through keyword monitoring, not full job-detail crawling.
 - Natural-language intent is classified with AstrBot's configured LLM when available, and falls back to local rules when unavailable.
 - Auto-discovery is intentionally conservative. If a candidate page does not look like an official recruitment entry, it will not be saved.

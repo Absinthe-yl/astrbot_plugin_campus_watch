@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 
 from astrbot.api import star
@@ -11,6 +12,7 @@ from astrbot.core.provider.entities import ProviderType
 from astrbot.core.star.filter.command import GreedyStr
 from astrbot.core.star.star_tools import StarTools
 
+from .aggregators import WonderCVAggregator
 from .company_registry import canonical_companies
 from .discovery import CampusSourceDiscovery
 from .resolver import resolve_companies_in_text, resolve_company
@@ -22,13 +24,14 @@ from .store import CampusWatchStore
     "astrbot_plugin_campus_watch",
     "22353",
     "监控 27 届校园招聘开启状态的官方源插件",
-    "0.2.0",
+    "0.4.0",
 )
 class CampusWatchPlugin(star.Star):
     def __init__(self, context: star.Context) -> None:
         super().__init__(context)
         self.adapter = OfficialCampusSourceAdapter()
         self.discovery = CampusSourceDiscovery()
+        self.wondercv = WonderCVAggregator()
         self.store = CampusWatchStore(self._data_dir() / "campus_watch.db")
 
     @filter.on_astrbot_loaded()
@@ -97,7 +100,7 @@ class CampusWatchPlugin(star.Star):
     @filter.command("今天校招")
     async def campus_today_alias(self, event: AstrMessageEvent):
         """自然语言别名命令：今天哪些开启了校招。"""
-        yield event.plain_result(self._format_today_openings())
+        yield event.plain_result(await self._format_today_openings())
 
     @filter.command("campus_watch_add")
     async def campus_watch_add(self, event: AstrMessageEvent, company: GreedyStr):
@@ -176,7 +179,7 @@ class CampusWatchPlugin(star.Star):
     @filter.command("当前校招")
     async def campus_current_alias(self, event: AstrMessageEvent):
         """自然语言别名命令：目前哪些公司开了校招。"""
-        yield event.plain_result(self._format_current_openings(limit=10))
+        yield event.plain_result(await self._format_current_openings(limit=10))
 
     @filter.command("校招")
     async def campus_ask(self, event: AstrMessageEvent, query: GreedyStr):
@@ -218,9 +221,9 @@ class CampusWatchPlugin(star.Star):
         limit = int(intent_data.get("limit") or 10)
 
         if intent == "today_openings":
-            return self._format_today_openings()
+            return await self._format_today_openings()
         if intent == "current_openings":
-            return self._format_current_openings(limit=limit)
+            return await self._format_current_openings(limit=limit)
         if intent == "company_status":
             return await self._format_company_status(companies)
         return (
@@ -314,31 +317,54 @@ class CampusWatchPlugin(star.Star):
             return None
         return data
 
-    def _format_today_openings(self) -> str:
-        rows = self.store.list_today_openings()
-        if not rows:
-            return "今天还没有记录到新的 27 届校招开启公司。先执行 /campus_refresh。"
-        lines = ["今天新开启的公司："]
-        for row in rows[:10]:
-            lines.append(f"- {row['company']} ({row['checked_at']})")
-        return "\n".join(lines)
+    async def _format_today_openings(self) -> str:
+        items = await self.wondercv.fetch_latest_items(limit=20)
+        today_str = datetime.now().strftime("%Y.%m.%d")
+        today_items = [item for item in items if item.collected_date == today_str]
+        if today_items:
+            lines = ["今天聚合源新收录的校招："]
+            for item in today_items[:10]:
+                lines.append(f"- {item.company} / 收录 {item.collected_date} / {item.summary[:60]}")
+            lines.append("说明: 以上来自 WonderCV 聚合源。")
+            return "\n".join(lines)
 
-    def _format_current_openings(self, limit: int = 10) -> str:
+        rows = self.store.list_today_openings()
+        if rows:
+            lines = ["今天新开启的公司："]
+            for row in rows[:10]:
+                lines.append(f"- {row['company']} ({row['checked_at']})")
+            return "\n".join(lines)
+
+        return "今天还没有记录到新的 27 届校招开启公司。先执行 /campus_refresh。"
+
+    async def _format_current_openings(self, limit: int = 10) -> str:
+        max_items = max(1, min(limit, 10))
+        items = await self.wondercv.fetch_latest_items(limit=max_items)
+        if items:
+            lines = ["目前聚合源最新校招："]
+            for item in items[:max_items]:
+                tags = "、".join(item.tags[:4]) if item.tags else "无标签"
+                lines.append(f"- {item.company} / 收录 {item.collected_date or '未知'} / {tags}")
+            lines.append("说明: 以上来自 WonderCV 聚合源。")
+            return "\n".join(lines)
+
         rows = self.store.list_current_status()
         opened = [row for row in rows if row["last_opened"] == 1]
-        if not opened:
-            return "当前还没有检测到已开启的公司，或者还没刷新。先执行 /campus_refresh。"
-        lines = ["目前检测到已开启的公司："]
-        for row in opened[: max(1, min(limit, 10))]:
-            checked_at = row["last_checked_at"] or "未知时间"
-            lines.append(f"- {row['company']} / 最近检查 {checked_at}")
-        return "\n".join(lines)
+        if opened:
+            lines = ["目前检测到已开启的公司："]
+            for row in opened[:max_items]:
+                checked_at = row["last_checked_at"] or "未知时间"
+                lines.append(f"- {row['company']} / 最近检查 {checked_at}")
+            return "\n".join(lines)
+        return "当前还没有检测到已开启的公司，或者还没刷新。先执行 /campus_refresh。"
 
     async def _format_company_status(self, companies: list[str]) -> str:
         if not companies:
             return "我没识别出你问的是哪家公司。可以直接问：`/校招 百度开没开校招`。"
 
         discovery_notes: list[str] = []
+        aggregator_notes: list[str] = []
+        aggregator_hit_companies: set[str] = set()
         for company in companies[:10]:
             resolution = resolve_company(company)
             canonical = resolution.canonical or company.strip()
@@ -349,12 +375,21 @@ class CampusWatchPlugin(star.Star):
                     discovery_notes.append(f"- {canonical}: 已自动发现并保存校招源")
                 else:
                     discovery_notes.append(f"- {canonical}: 未找到通过验证的官方校招源")
+            aggregator_item = await self.wondercv.find_company(canonical)
+            if aggregator_item:
+                aggregator_hit_companies.add(canonical)
+                aggregator_notes.append(
+                    f"- {canonical}: 已开启（WonderCV） / 收录 {aggregator_item.collected_date or '未知'} / "
+                    f"{aggregator_item.summary[:70]} / {aggregator_item.url}"
+                )
 
         rows = {row["company"]: row for row in self.store.list_current_status()}
         lines = []
         for company in companies[:10]:
             resolution = resolve_company(company)
             canonical = resolution.canonical or company.strip()
+            if canonical in aggregator_hit_companies:
+                continue
             row = rows.get(canonical)
             if not row:
                 lines.append(f"- {canonical}: 暂无可用状态，先执行 /campus_refresh {canonical}")
@@ -365,9 +400,14 @@ class CampusWatchPlugin(star.Star):
             status = "已开启" if row["last_opened"] == 1 else "暂未检测到"
             detail = row["evidence"] or row["last_error"] or "无附加信息"
             lines.append(f"- {canonical}: {status} / {detail[:120]}")
+        sections: list[str] = []
+        if aggregator_notes:
+            sections.extend(["聚合源结果：", *aggregator_notes, ""])
         if discovery_notes:
-            return "\n".join(["自动发现结果：", *discovery_notes, "", "当前状态：", *lines])
-        return "\n".join(lines)
+            sections.extend(["自动发现结果：", *discovery_notes, ""])
+        if lines:
+            sections.extend(["官方源补充状态：", *lines])
+        return "\n".join(sections) if sections else "\n".join(lines)
 
     async def _ensure_source_for_company(
         self,

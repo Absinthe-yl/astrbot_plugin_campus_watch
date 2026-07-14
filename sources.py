@@ -27,6 +27,12 @@ GENERAL_PATTERNS = (
     "校招",
     "graduate",
 )
+OFFICIAL_FALLBACK_RULES: dict[str, tuple[str, ...]] = {
+    "百度": (
+        "百度校园招聘",
+        "百度校招",
+    ),
+}
 
 
 @dataclass
@@ -95,7 +101,7 @@ class OfficialCampusSourceAdapter:
 
         text = self._normalize_text(response.text)
         content_hash = hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()
-        opened, evidence = self._detect_opening(text)
+        opened, evidence = self._detect_opening(source, text)
         return SourceResult(
             company=source.company,
             url=source.url,
@@ -113,13 +119,27 @@ class OfficialCampusSourceAdapter:
         text = re.sub(r"\s+", " ", text)
         return text.strip()
 
-    def _detect_opening(self, text: str) -> tuple[bool, str]:
+    def _detect_opening(
+        self,
+        source: SourceDefinition,
+        text: str,
+    ) -> tuple[bool, str]:
         lower_text = text.lower()
         year_hits = [pattern for pattern in YEAR_PATTERNS if pattern.lower() in lower_text]
         general_hits = [
             pattern for pattern in GENERAL_PATTERNS if pattern.lower() in lower_text
         ]
         if not year_hits:
+            fallback_hits = [
+                pattern
+                for pattern in OFFICIAL_FALLBACK_RULES.get(source.company, ())
+                if pattern.lower() in lower_text
+            ]
+            if fallback_hits:
+                return True, (
+                    f"命中官方动态校招页特判: {fallback_hits[0]}"
+                    f" | 页面: {source.url}"
+                )
             if general_hits:
                 return False, f"仅检测到泛校招关键词: {', '.join(general_hits[:4])}"
             return False, "未检测到 27 届相关关键词"
