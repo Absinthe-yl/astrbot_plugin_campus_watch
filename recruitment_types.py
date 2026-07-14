@@ -12,6 +12,8 @@ class RecruitmentSpec:
     batch: str | None = None
 
     def label(self) -> str:
+        if self.program == "internship" and self.batch == "daily":
+            return "日常实习"
         if self.program == "internship" and self.season == "summer":
             return "暑期实习"
         if self.program == "internship" and self.season == "winter":
@@ -34,6 +36,8 @@ class RecruitmentSpec:
 def extract_recruitment_spec(text: str) -> RecruitmentSpec:
     normalized = normalize_text(text)
 
+    if any(token in normalized for token in ("日常实习", "长期实习")):
+        return RecruitmentSpec(program="internship", batch="daily")
     if any(token in normalized for token in ("暑期实习", "summerintern", "暑期岗位")):
         return RecruitmentSpec(program="internship", season="summer")
     if any(token in normalized for token in ("寒假实习", "winterintern", "寒假岗位")):
@@ -70,6 +74,8 @@ def recruitment_matches(
     if spec.program == "internship":
         if "实习" not in normalized:
             return False
+        if spec.batch == "daily":
+            return any(token in normalized for token in ("日常实习", "长期实习"))
         if spec.season == "summer":
             return any(token in normalized for token in ("暑期实习", "summerintern", "暑期岗位"))
         if spec.season == "winter":
@@ -104,6 +110,8 @@ def recruitment_matches(
 
 def describe_item_type(text: str) -> str:
     normalized = normalize_text(text)
+    if any(token in normalized for token in ("日常实习", "长期实习")):
+        return "日常实习"
     if any(token in normalized for token in ("暑期实习", "summerintern", "暑期岗位")):
         return "暑期实习"
     if any(token in normalized for token in ("寒假实习", "winterintern", "寒假岗位")):
@@ -134,6 +142,8 @@ def describe_item_type(text: str) -> str:
 
 
 def wondercv_batch_params(spec: RecruitmentSpec) -> str | None:
+    if spec.program == "internship" and spec.batch == "daily":
+        return None
     if spec.program == "internship" and spec.season == "summer":
         return "暑期实习"
     if spec.program == "internship" and spec.season == "winter":

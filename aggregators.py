@@ -50,6 +50,8 @@ class WonderCVAggregator:
         end_at: str | None = None,
     ) -> list[AggregatorItem]:
         spec = recruitment_spec or RecruitmentSpec()
+        if spec.program == "internship" and spec.batch == "daily" and not keyword:
+            keyword = "日常实习"
         batch = wondercv_batch_params(spec)
         async with httpx.AsyncClient(
             timeout=self.timeout,

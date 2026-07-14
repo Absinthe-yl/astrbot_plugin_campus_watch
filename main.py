@@ -50,7 +50,7 @@ class CampusWatchPlugin(star.Star):
     def _should_handle_nl(self, query: str) -> bool:
         if not query or query.startswith("/"):
             return False
-        keywords = ("校招", "校园招聘", "秋招", "春招", "实习", "提前批", "正式批", "补录", "寒假实习")
+        keywords = ("校招", "校园招聘", "秋招", "春招", "实习", "提前批", "正式批", "补录", "寒假实习", "日常实习")
         if any(keyword in query for keyword in keywords):
             return True
         companies = resolve_companies_in_text(query)
@@ -72,7 +72,7 @@ class CampusWatchPlugin(star.Star):
         return (
             "你可以直接问我这些："
             "字节开校招了吗、腾讯秋招提前批开没开、百度春招正式批开没开、"
-            "美团秋招补录开没开、阿里寒假实习开没开、哪些公司开校招了。"
+            "美团秋招补录开没开、阿里寒假实习开没开、日常实习哪些公司开了。"
         )
 
     async def _parse_query(self, query: str, event: AstrMessageEvent) -> dict:
@@ -121,7 +121,7 @@ class CampusWatchPlugin(star.Star):
             "\nintent 只能是 company_status current_openings today_openings ignore。"
             "\nprogram 只能是 campus internship null。"
             "\nseason 只能是 autumn spring summer winter null。"
-            "\nbatch 只能是 early formal supplement null。"
+            "\nbatch 只能是 early formal supplement daily null。"
             "\ndays 表示用户想看最近几天，默认 7，今天就是 1。"
             f"\n标准公司名参考：{', '.join(canonical_companies())}"
             f"\n用户问题：{query}"
