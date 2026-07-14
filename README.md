@@ -1,82 +1,46 @@
 # astrbot_plugin_campus_watch
 
-AstrBot plugin for tracking official campus recruitment pages and detecting new 2027-cohort openings.
+基于 WonderCV API 的校园招聘自然语言查询插件。
 
-## Features
+## 用法
 
-- Monitor built-in official campus recruitment sources.
-- Refresh source pages on demand.
-- Record companies that appear to have newly opened 2027-cohort recruitment today.
-- Maintain a personal watch list in AstrBot.
-- Persist source status in local SQLite.
-- Support company alias resolution such as `腾讯科技 -> 腾讯`, `抖音 -> 字节跳动`.
-- Support natural-language campus recruitment queries through AstrBot LLM.
-- Support auto-discovery of official campus sources for companies not yet stored locally.
-- Support WonderCV public campus feed as the primary aggregated source.
+插件不再提供运维型命令列表，主要通过自然语言直接问：
 
-## Commands
-
-- `/campus_source_list`
-- `/campus_refresh`
-- `/campus_refresh 腾讯`
-- `/campus_today`
-- `/campus_watch_add 腾讯`
-- `/campus_watch_list`
-- `/campus_watch_remove 腾讯`
-- `/campus_status`
-- `/campus_discover 快手`
-- `/今天校招`
-- `/当前校招`
-- `/校招 今天哪些开启了校招`
-- `/校招 目前哪些公司开了校招`
-- `/校招 百度开没开校招`
-
-The plugin can also answer direct natural-language questions in chat, for example:
-
-- `今天哪些开启了校招`
-- `目前哪些公司开了校招`
-- `腾讯科技开没开校招`
-- `抖音开了吗`
+- `字节开校招了吗`
 - `腾讯秋招提前批开没开`
-- `百度秋招正式批开没开`
-- `美团春招提前批开没开`
-- `阿里春招正式批开没开`
-- `字节暑期实习开没开`
-- `美团春招开没开`
+- `百度春招正式批开没开`
+- `美团暑期实习开没开`
+- `哪些公司开校招了`
+- `近7天哪些公司开春招了`
 
-When a company is not yet in the local source database, the plugin will:
+也保留一个兜底命令：
 
-1. Search candidate pages from public search engines.
-2. Validate whether the page looks like an official recruitment entry.
-3. Save the verified source for reuse in later queries.
+- `/校招 字节开校招了吗`
 
-The plugin reads the public WonderCV campus feed as the primary aggregated source to:
+## 查询方式
 
-1. Answer "currently which companies have openings" with aggregated results.
-2. Distinguish campus recruitment types such as spring, autumn, early batch, formal batch, and summer internship.
-3. Provide auxiliary evidence for "has company X opened campus recruitment".
-4. Show same-day aggregated feed items when local refresh data is empty.
+1. AstrBot LLM 先把用户问题解析成结构化条件。
+2. 插件将条件组装成 WonderCV API 请求参数。
+3. 请求 WonderCV API。
+4. 用对话形式返回结论。
+5. 相同查询参数会优先命中本地缓存文件，不再重复请求。
 
-## Install
+支持的结构化维度：
 
-Place this plugin directory under:
+- 公司关键词
+- 校招 / 实习
+- 春招 / 秋招 / 暑期实习
+- 提前批 / 正式批
+- 最近 N 天
 
-```text
-data/plugins/astrbot_plugin_campus_watch
-```
+## 数据源
 
-Then reload plugins from AstrBot WebUI.
+- WonderCV 首页：<https://www.wondercv.com/xiaozhao/>
+- WonderCV API：<https://api.wondercv.com/cv/v3/campus_recruits_v2>
 
-## Runtime Notes
+## 说明
 
-- This first version uses official campus pages as the primary data source.
-- WonderCV is the primary aggregated source for natural-language campus queries.
-- Official company pages are still used for per-company verification and fallback checks.
-- It detects likely openings through keyword monitoring, not full job-detail crawling.
-- Natural-language intent is classified with AstrBot's configured LLM when available, and falls back to local rules when unavailable.
-- Auto-discovery is intentionally conservative. If a candidate page does not look like an official recruitment entry, it will not be saved.
-- SQLite data is stored under AstrBot `data/plugin_data/astrbot_plugin_campus_watch`.
-
-## Server Deployment
-
-This plugin is suitable for self-hosted AstrBot deployments on a server. After copying the plugin directory to the server, reload the plugin from AstrBot WebUI.
+- 精确问法会优先依赖 WonderCV API 的筛选结果。
+- 模糊问法会返回更自然的汇总结论。
+- 当前插件不再依赖旧的关注列表、手动刷新、源管理命令。
+- 查询缓存保存在插件数据目录下的 `wondercv_query_cache.json`。

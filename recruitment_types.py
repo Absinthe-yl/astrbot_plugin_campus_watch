@@ -114,3 +114,32 @@ def describe_item_type(text: str) -> str:
     if "校招" in normalized:
         return "校招"
     return "未知类型"
+
+
+def wondercv_batch_params(spec: RecruitmentSpec) -> str | None:
+    if spec.program == "internship" and spec.season == "summer":
+        return "暑期实习"
+    if spec.program == "internship":
+        return "实习"
+    if spec.program != "campus":
+        return None
+
+    if spec.season == "autumn" and spec.batch == "early":
+        return "秋招提前批"
+    if spec.season == "autumn" and spec.batch == "formal":
+        return "秋招"
+    if spec.season == "autumn":
+        return "秋招,秋招提前批"
+
+    if spec.season == "spring" and spec.batch == "early":
+        return "春招提前批"
+    if spec.season == "spring" and spec.batch == "formal":
+        return "春招"
+    if spec.season == "spring":
+        return "春招,春招提前批"
+
+    if spec.batch == "early":
+        return "秋招提前批,春招提前批"
+    if spec.batch == "formal":
+        return "秋招,春招"
+    return None
