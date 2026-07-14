@@ -12,6 +12,7 @@ from astrbot.core.star.filter.command import GreedyStr
 from astrbot.core.star.star_tools import StarTools
 
 from .company_registry import canonical_companies
+from .discovery import CampusSourceDiscovery
 from .resolver import resolve_companies_in_text, resolve_company
 from .sources import OfficialCampusSourceAdapter
 from .store import CampusWatchStore
@@ -21,12 +22,13 @@ from .store import CampusWatchStore
     "astrbot_plugin_campus_watch",
     "22353",
     "监控 27 届校园招聘开启状态的官方源插件",
-    "0.1.0",
+    "0.2.0",
 )
 class CampusWatchPlugin(star.Star):
     def __init__(self, context: star.Context) -> None:
         super().__init__(context)
         self.adapter = OfficialCampusSourceAdapter()
+        self.discovery = CampusSourceDiscovery()
         self.store = CampusWatchStore(self._data_dir() / "campus_watch.db")
 
     @filter.on_astrbot_loaded()
@@ -40,11 +42,11 @@ class CampusWatchPlugin(star.Star):
         company: GreedyStr | None = None,
     ):
         """刷新校招源并输出新增开启结果。"""
-        sources = (
-            [self.store.resolve_source(str(company))[1]]
-            if company and str(company).strip()
-            else self.store.list_sources()
-        )
+        if company and str(company).strip():
+            source = await self._ensure_source_for_company(str(company))
+            sources = [source] if source else []
+        else:
+            sources = self.store.list_sources()
         sources = [source for source in sources if source is not None]
         if not sources:
             yield event.plain_result("没有匹配到要刷新的公司。")
@@ -139,9 +141,10 @@ class CampusWatchPlugin(star.Star):
     async def campus_source_list(self, event: AstrMessageEvent):
         """列出内置监控公司。"""
         rows = self.store.list_current_status(watch_only=False)
-        lines = ["内置官方源："]
+        lines = ["当前监控源："]
         for row in rows:
-            lines.append(f"- {row['company']}: {row['url']}")
+            source_type = "自动发现" if row["source_type"] == "discovered" else "内置"
+            lines.append(f"- {row['company']} [{source_type}]: {row['url']}")
         yield event.plain_result("\n".join(lines))
 
     @filter.command("campus_status")
@@ -150,14 +153,25 @@ class CampusWatchPlugin(star.Star):
         rows = self.store.list_current_status(watch_only=False)
         opened = [row["company"] for row in rows if row["last_opened"] == 1]
         unchecked = [row["company"] for row in rows if not row["last_checked_at"]]
+        discovered = [row["company"] for row in rows if row["source_type"] == "discovered"]
         lines = [
             f"总源数: {len(rows)}",
+            f"自动发现源: {len(discovered)}",
             f"当前命中 27 届关键词: {len(opened)}",
             f"尚未检查: {len(unchecked)}",
         ]
         if opened:
             lines.append("当前命中公司: " + "、".join(opened[:15]))
         yield event.plain_result("\n".join(lines))
+
+    @filter.command("campus_discover")
+    async def campus_discover(self, event: AstrMessageEvent, company: GreedyStr):
+        """搜索并验证某家公司的官方校招源。"""
+        source = await self._ensure_source_for_company(str(company), force_discover=True)
+        if not source:
+            yield event.plain_result("没有找到通过验证的官方校招源，暂未入库。")
+            return
+        yield event.plain_result(f"已发现并保存校招源：{source.company} -> {source.url}")
 
     @filter.command("当前校招")
     async def campus_current_alias(self, event: AstrMessageEvent):
@@ -208,7 +222,7 @@ class CampusWatchPlugin(star.Star):
         if intent == "current_openings":
             return self._format_current_openings(limit=limit)
         if intent == "company_status":
-            return self._format_company_status(companies)
+            return await self._format_company_status(companies)
         return (
             "我目前支持三类校招问题：今天哪些新开了、目前哪些公司开了、某家公司开没开。"
             "也可以直接用 `/校招 百度开没开校招` 这种方式问。"
@@ -320,17 +334,30 @@ class CampusWatchPlugin(star.Star):
             lines.append(f"- {row['company']} / 最近检查 {checked_at}")
         return "\n".join(lines)
 
-    def _format_company_status(self, companies: list[str]) -> str:
+    async def _format_company_status(self, companies: list[str]) -> str:
         if not companies:
             return "我没识别出你问的是哪家公司。可以直接问：`/校招 百度开没开校招`。"
+
+        discovery_notes: list[str] = []
+        for company in companies[:10]:
+            resolution = resolve_company(company)
+            canonical = resolution.canonical or company.strip()
+            source = self.store.resolve_source(canonical)[1]
+            if not source:
+                discovered = await self._ensure_source_for_company(canonical, force_discover=True)
+                if discovered:
+                    discovery_notes.append(f"- {canonical}: 已自动发现并保存校招源")
+                else:
+                    discovery_notes.append(f"- {canonical}: 未找到通过验证的官方校招源")
+
         rows = {row["company"]: row for row in self.store.list_current_status()}
         lines = []
         for company in companies[:10]:
             resolution = resolve_company(company)
-            canonical = resolution.canonical or company
+            canonical = resolution.canonical or company.strip()
             row = rows.get(canonical)
             if not row:
-                lines.append(f"- {canonical}: 暂无监控源")
+                lines.append(f"- {canonical}: 暂无可用状态，先执行 /campus_refresh {canonical}")
                 continue
             if not row["last_checked_at"]:
                 lines.append(f"- {canonical}: 还没检查，先执行 /campus_refresh {canonical}")
@@ -338,4 +365,28 @@ class CampusWatchPlugin(star.Star):
             status = "已开启" if row["last_opened"] == 1 else "暂未检测到"
             detail = row["evidence"] or row["last_error"] or "无附加信息"
             lines.append(f"- {canonical}: {status} / {detail[:120]}")
+        if discovery_notes:
+            return "\n".join(["自动发现结果：", *discovery_notes, "", "当前状态：", *lines])
         return "\n".join(lines)
+
+    async def _ensure_source_for_company(
+        self,
+        company: str,
+        force_discover: bool = False,
+    ):
+        resolution, source = self.store.resolve_source(company)
+        canonical = resolution.canonical or company.strip()
+        if source and not force_discover:
+            return source
+
+        discovered = await self.discovery.discover(canonical)
+        if not discovered:
+            return source if source and force_discover else None
+
+        self.store.save_discovered_source(
+            company=discovered.company,
+            url=discovered.url,
+            verified_at=discovered.verified_at,
+            discovery_query=discovered.discovery_query,
+        )
+        return self.store.resolve_source(discovered.company)[1]

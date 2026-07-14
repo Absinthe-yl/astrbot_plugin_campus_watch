@@ -36,3 +36,8 @@ COMPANY_ALIASES: dict[str, tuple[str, ...]] = {
 
 def canonical_companies() -> list[str]:
     return list(COMPANY_ALIASES.keys())
+
+
+def aliases_for_company(company: str) -> tuple[str, ...]:
+    aliases = COMPANY_ALIASES.get(company, ())
+    return (company, *aliases)

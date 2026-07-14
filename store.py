@@ -36,6 +36,9 @@ class CampusWatchStore:
                     company TEXT PRIMARY KEY,
                     url TEXT NOT NULL,
                     enabled INTEGER NOT NULL DEFAULT 1,
+                    source_type TEXT NOT NULL DEFAULT 'builtin',
+                    verified_at TEXT,
+                    discovery_query TEXT,
                     last_opened INTEGER,
                     last_checked_at TEXT,
                     last_opened_at TEXT,
@@ -64,15 +67,35 @@ class CampusWatchStore:
 
     def seed_defaults(self) -> None:
         with self._connect() as conn:
+            self._ensure_column(conn, "sources", "source_type", "TEXT NOT NULL DEFAULT 'builtin'")
+            self._ensure_column(conn, "sources", "verified_at", "TEXT")
+            self._ensure_column(conn, "sources", "discovery_query", "TEXT")
             for source in DEFAULT_SOURCES:
                 conn.execute(
                     """
-                    INSERT INTO sources(company, url, enabled)
-                    VALUES (?, ?, 1)
-                    ON CONFLICT(company) DO UPDATE SET url=excluded.url
+                    INSERT INTO sources(company, url, enabled, source_type)
+                    VALUES (?, ?, 1, 'builtin')
+                    ON CONFLICT(company) DO UPDATE SET
+                        url=excluded.url,
+                        source_type=CASE
+                            WHEN sources.source_type = 'discovered' THEN sources.source_type
+                            ELSE excluded.source_type
+                        END
                     """,
                     (source.company, source.url),
                 )
+
+    def _ensure_column(
+        self,
+        conn: sqlite3.Connection,
+        table_name: str,
+        column_name: str,
+        column_def: str,
+    ) -> None:
+        rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        existing = {row["name"] for row in rows}
+        if column_name not in existing:
+            conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_def}")
 
     def list_sources(self) -> list[SourceDefinition]:
         with self._connect() as conn:
@@ -199,7 +222,16 @@ class CampusWatchStore:
 
     def list_current_status(self, watch_only: bool = False) -> list[sqlite3.Row]:
         sql = """
-            SELECT s.company, s.url, s.last_opened, s.last_checked_at, s.evidence, s.last_error
+            SELECT
+                s.company,
+                s.url,
+                s.source_type,
+                s.verified_at,
+                s.discovery_query,
+                s.last_opened,
+                s.last_checked_at,
+                s.evidence,
+                s.last_error
             FROM sources s
         """
         if watch_only:
@@ -208,3 +240,27 @@ class CampusWatchStore:
         with self._connect() as conn:
             rows = conn.execute(sql).fetchall()
         return rows
+
+    def save_discovered_source(
+        self,
+        company: str,
+        url: str,
+        verified_at: str,
+        discovery_query: str,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO sources(
+                    company, url, enabled, source_type, verified_at, discovery_query
+                )
+                VALUES (?, ?, 1, 'discovered', ?, ?)
+                ON CONFLICT(company) DO UPDATE SET
+                    url=excluded.url,
+                    enabled=1,
+                    source_type='discovered',
+                    verified_at=excluded.verified_at,
+                    discovery_query=excluded.discovery_query
+                """,
+                (company, url, verified_at, discovery_query),
+            )

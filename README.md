@@ -11,6 +11,7 @@ AstrBot plugin for tracking official campus recruitment pages and detecting new 
 - Persist source status in local SQLite.
 - Support company alias resolution such as `腾讯科技 -> 腾讯`, `抖音 -> 字节跳动`.
 - Support natural-language campus recruitment queries through AstrBot LLM.
+- Support auto-discovery of official campus sources for companies not yet stored locally.
 
 ## Commands
 
@@ -22,6 +23,7 @@ AstrBot plugin for tracking official campus recruitment pages and detecting new 
 - `/campus_watch_list`
 - `/campus_watch_remove 腾讯`
 - `/campus_status`
+- `/campus_discover 快手`
 - `/今天校招`
 - `/当前校招`
 - `/校招 今天哪些开启了校招`
@@ -34,6 +36,12 @@ The plugin can also answer direct natural-language questions in chat, for exampl
 - `目前哪些公司开了校招`
 - `腾讯科技开没开校招`
 - `抖音开了吗`
+
+When a company is not yet in the local source database, the plugin will:
+
+1. Search candidate pages from public search engines.
+2. Validate whether the page looks like an official recruitment entry.
+3. Save the verified source for reuse in later queries.
 
 ## Install
 
@@ -50,6 +58,7 @@ Then reload plugins from AstrBot WebUI.
 - This first version uses official campus pages as the primary data source.
 - It detects likely openings through keyword monitoring, not full job-detail crawling.
 - Natural-language intent is classified with AstrBot's configured LLM when available, and falls back to local rules when unavailable.
+- Auto-discovery is intentionally conservative. If a candidate page does not look like an official recruitment entry, it will not be saved.
 - SQLite data is stored under AstrBot `data/plugin_data/astrbot_plugin_campus_watch`.
 
 ## Server Deployment
